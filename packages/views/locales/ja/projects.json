@@ -70,6 +70,8 @@
     "rename_action": "プロジェクト名を変更",
     "copy_link": "リンクをコピー",
     "delete_action": "プロジェクトを削除",
+    "tab_overview": "概要",
+    "tab_issues": "タスク",
     "section_properties": "プロパティ",
     "section_progress": "進捗",
     "section_description": "説明",

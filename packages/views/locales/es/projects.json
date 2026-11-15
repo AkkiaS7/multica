@@ -68,6 +68,8 @@
     "rename_action": "Renombrar proyecto",
     "copy_link": "Copiar enlace",
     "delete_action": "Eliminar proyecto",
+    "tab_overview": "Resumen",
+    "tab_issues": "Tareas",
     "section_properties": "Propiedades",
     "section_progress": "Progreso",
     "section_description": "Descripción",

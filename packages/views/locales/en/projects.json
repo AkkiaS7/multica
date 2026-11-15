@@ -70,6 +70,8 @@
     "rename_action": "Rename project",
     "copy_link": "Copy link",
     "delete_action": "Delete project",
+    "tab_overview": "Overview",
+    "tab_issues": "Issues",
     "section_properties": "Properties",
     "section_progress": "Progress",
     "section_description": "Description",
