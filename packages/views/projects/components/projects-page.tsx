@@ -78,6 +78,7 @@ import { DeleteProjectsDialog, ProjectRowActions } from "./project-row-actions";
 import { useFormatRelativeDate } from "./labels";
 import { ProjectStatusBadge, ProjectPriorityBadge } from "./project-badge";
 import { ProjectLeadPicker } from "./project-lead-picker";
+import { getProjectProgress } from "./project-issue-metrics";
 import { PAGE_GUTTER } from "../../layout/page-header";
 import { cn } from "@multica/ui/lib/utils";
 
@@ -97,8 +98,10 @@ const STATUS_ORDER: Record<ProjectStatus, number> = {
   cancelled: 4,
 };
 
-const progressOf = (p: Project) =>
-  p.issue_count > 0 ? p.done_count / p.issue_count : -1;
+const progressOf = (p: Project) => {
+  const progress = getProjectProgress(p);
+  return progress.scope > 0 ? progress.completed / progress.scope : -1;
+};
 
 // Composite "type:id" lead value so the string[] filter holds member/agent
 // refs alike.
@@ -107,15 +110,16 @@ function leadFilterValue(p: Project): string | null {
 }
 
 function ProgressRing({ project }: { project: Project }) {
-  if (project.issue_count === 0) return <CollectionEmptyValue />;
-  const pct = Math.round((project.done_count / project.issue_count) * 100);
+  const progress = getProjectProgress(project);
+  if (progress.scope === 0) return <CollectionEmptyValue />;
+  const pct = progress.percent;
   return (
     <span className="flex items-center gap-1.5">
       <span className="relative h-3.5 w-3.5">
         <svg className="h-3.5 w-3.5 -rotate-90" viewBox="0 0 16 16">
           <circle className="text-muted" strokeWidth="2" stroke="currentColor" fill="none" r="6" cx="8" cy="8" />
           <circle
-            className="text-emerald-500"
+            className="text-info"
             strokeWidth="2"
             stroke="currentColor"
             fill="none"
@@ -128,7 +132,7 @@ function ProgressRing({ project }: { project: Project }) {
         </svg>
       </span>
       <span className="tabular-nums">
-        {project.done_count}/{project.issue_count}
+        {progress.completed}/{progress.scope}
       </span>
     </span>
   );
@@ -168,10 +172,7 @@ function ProjectCard({
     (data: UpdateProjectRequest) => updateProject.mutate({ id: project.id, ...data }),
     [project.id, updateProject],
   );
-  const progressPercent =
-    project.issue_count > 0
-      ? Math.round((project.done_count / project.issue_count) * 100)
-      : 0;
+  const progress = getProjectProgress(project);
 
   return (
     <div className="group/card group/row flex flex-col rounded-md border bg-card transition-colors hover:border-primary/50">
@@ -188,26 +189,26 @@ function ProjectCard({
           <ProjectStatusBadge project={project} handleUpdate={handleUpdate} triggerClassName="shrink-0" />
         </div>
 
-        {project.issue_count > 0 ? (
+        {progress.scope > 0 ? (
           <div className="flex items-center justify-end gap-1.5 pt-2">
             <div className="relative h-4 w-4">
               <svg className="h-4 w-4 -rotate-90" viewBox="0 0 16 16">
                 <circle className="text-muted" strokeWidth="2" stroke="currentColor" fill="none" r="6" cx="8" cy="8" />
                 <circle
-                  className="text-emerald-500"
+                  className="text-info"
                   strokeWidth="2"
                   stroke="currentColor"
                   fill="none"
                   r="6"
                   cx="8"
                   cy="8"
-                  strokeDasharray={`${progressPercent * 0.377} 37.7`}
+                  strokeDasharray={`${progress.percent * 0.377} 37.7`}
                   strokeLinecap="round"
                 />
               </svg>
             </div>
             <span className="text-micro tabular-nums text-muted-foreground">
-              {project.done_count}/{project.issue_count}
+              {progress.completed}/{progress.scope}
             </span>
           </div>
         ) : (

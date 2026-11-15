@@ -9,6 +9,9 @@ export const projectKeys = {
   members: (wsId: string, id: string) => [...projectKeys.detail(wsId, id), "members"] as const,
   subscription: (wsId: string, id: string) =>
     [...projectKeys.detail(wsId, id), "subscription"] as const,
+  // Under detail so the issue mutations that invalidate projectKeys.all also
+  // refresh the trend and breakdown.
+  progress: (wsId: string, id: string) => [...projectKeys.detail(wsId, id), "progress"] as const,
 };
 
 export function projectListOptions(wsId: string) {
@@ -23,6 +26,13 @@ export function projectDetailOptions(wsId: string, id: string) {
   return queryOptions({
     queryKey: projectKeys.detail(wsId, id),
     queryFn: () => api.getProject(id),
+  });
+}
+
+export function projectProgressOptions(wsId: string, id: string) {
+  return queryOptions({
+    queryKey: projectKeys.progress(wsId, id),
+    queryFn: () => api.getProjectProgress(id),
   });
 }
 
