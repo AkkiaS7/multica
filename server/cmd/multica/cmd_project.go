@@ -32,6 +32,22 @@ var projectGetCmd = &cobra.Command{
 	RunE:  runProjectGet,
 }
 
+var projectProgressCmd = &cobra.Command{
+	Use:   "progress <id>",
+	Short: "Show project progress: completed vs. scope, weekly trend and forecast",
+	Long: `Show project progress.
+
+Scope is every issue in the project except cancelled ones (closed category).
+Completed counts issues in the done category; started issues are tracked but
+do not add to the percentage. Each issue counts as one.
+
+--history prints the weekly trend (scope, started, completed per week).
+--by assignee breaks scope and completion down per assignee.
+JSON output always carries the full response.`,
+	Args: exactArgs(1),
+	RunE: runProjectProgress,
+}
+
 var projectCreateCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a new project",
@@ -148,6 +164,7 @@ func validateProjectStatus(status string) error {
 func init() {
 	projectCmd.AddCommand(projectListCmd)
 	projectCmd.AddCommand(projectGetCmd)
+	projectCmd.AddCommand(projectProgressCmd)
 	projectCmd.AddCommand(projectCreateCmd)
 	projectCmd.AddCommand(projectUpdateCmd)
 	projectCmd.AddCommand(projectDeleteCmd)
@@ -173,6 +190,10 @@ func init() {
 
 	// project get
 	projectGetCmd.Flags().String("output", "json", "Output format: table or json")
+
+	projectProgressCmd.Flags().String("output", "table", "Output format: table or json")
+	projectProgressCmd.Flags().Bool("history", false, "Print the weekly trend")
+	projectProgressCmd.Flags().String("by", "", "Break progress down by: assignee")
 
 	// project create
 	projectCreateCmd.Flags().String("title", "", "Project title (required)")
@@ -335,12 +356,13 @@ func runProjectGet(cmd *cobra.Command, args []string) error {
 	if output == "table" {
 		actors := loadActorDisplayLookup(ctx, client)
 		lead := formatLead(project, actors)
-		headers := []string{"ID", "TITLE", "STATUS", "LEAD", "DESCRIPTION"}
+		headers := []string{"ID", "TITLE", "STATUS", "LEAD", "PROGRESS", "DESCRIPTION"}
 		rows := [][]string{{
 			strVal(project, "id"),
 			strVal(project, "title"),
 			strVal(project, "status"),
 			lead,
+			formatProjectProgress(project["progress"]),
 			strVal(project, "description"),
 		}}
 		cli.PrintTable(os.Stdout, headers, rows)
@@ -1025,6 +1047,121 @@ func summarizeResourceRef(raw any) string {
 }
 
 // Helpers
+
+func runProjectProgress(cmd *cobra.Command, args []string) error {
+	by, _ := cmd.Flags().GetString("by")
+	if by != "" && by != "assignee" {
+		return fmt.Errorf("invalid --by %q; valid values: assignee", by)
+	}
+	history, _ := cmd.Flags().GetBool("history")
+	if history && by != "" {
+		return fmt.Errorf("--history and --by cannot be combined")
+	}
+
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+
+	projectRef, err := resolveProjectID(ctx, client, args[0])
+	if err != nil {
+		return fmt.Errorf("resolve project: %w", err)
+	}
+	var resp map[string]any
+	if err := client.GetJSON(ctx, "/api/projects/"+projectRef.ID+"/progress", &resp); err != nil {
+		return fmt.Errorf("get project progress: %w", err)
+	}
+
+	output, _ := cmd.Flags().GetString("output")
+	if output != "table" {
+		return cli.PrintJSON(os.Stdout, resp)
+	}
+	switch {
+	case history:
+		headers, rows := projectProgressHistoryTable(resp)
+		cli.PrintTable(os.Stdout, headers, rows)
+	case by == "assignee":
+		headers, rows := projectProgressAssigneeTable(resp, loadActorDisplayLookup(ctx, client))
+		cli.PrintTable(os.Stdout, headers, rows)
+	default:
+		headers, rows := projectProgressSummaryTable(resp)
+		cli.PrintTable(os.Stdout, headers, rows)
+	}
+	return nil
+}
+
+func progressInt(m map[string]any, key string) int64 {
+	n, _ := m[key].(float64)
+	return int64(n)
+}
+
+// formatProjectProgress renders a progress object as "completed/scope (pct%)".
+func formatProjectProgress(v any) string {
+	p, ok := v.(map[string]any)
+	if !ok {
+		return ""
+	}
+	return fmt.Sprintf("%d/%d (%d%%)", progressInt(p, "completed"), progressInt(p, "scope"), progressInt(p, "percent"))
+}
+
+func projectProgressSummaryTable(resp map[string]any) ([]string, [][]string) {
+	p, _ := resp["progress"].(map[string]any)
+	forecast := ""
+	if f, ok := resp["forecast"].(map[string]any); ok {
+		forecast = fmt.Sprintf("%s (%.2f/week)", strVal(f, "completion_date"), f["weekly_velocity"])
+	}
+	headers := []string{"PROGRESS", "SCOPE", "COMPLETED", "STARTED", "UNSTARTED", "CANCELLED", "FORECAST"}
+	rows := [][]string{{
+		formatProjectProgress(p),
+		fmt.Sprint(progressInt(p, "scope")),
+		fmt.Sprint(progressInt(p, "completed")),
+		fmt.Sprint(progressInt(p, "started")),
+		fmt.Sprint(progressInt(p, "unstarted")),
+		fmt.Sprint(progressInt(p, "cancelled")),
+		forecast,
+	}}
+	return headers, rows
+}
+
+func projectProgressHistoryTable(resp map[string]any) ([]string, [][]string) {
+	points, _ := resp["history"].([]any)
+	rows := make([][]string, 0, len(points))
+	for _, raw := range points {
+		p, _ := raw.(map[string]any)
+		rows = append(rows, []string{
+			strVal(p, "date"),
+			fmt.Sprint(progressInt(p, "scope")),
+			fmt.Sprint(progressInt(p, "started")),
+			fmt.Sprint(progressInt(p, "completed")),
+		})
+	}
+	return []string{"WEEK", "SCOPE", "STARTED", "COMPLETED"}, rows
+}
+
+func projectProgressAssigneeTable(resp map[string]any, actors actorDisplayLookup) ([]string, [][]string) {
+	entries, _ := resp["by_assignee"].([]any)
+	rows := make([][]string, 0, len(entries))
+	for _, raw := range entries {
+		e, _ := raw.(map[string]any)
+		name := actors.actor(strVal(e, "assignee_type"), strVal(e, "assignee_id"))
+		if name == "" {
+			name = "unassigned"
+		}
+		scope, completed := progressInt(e, "scope"), progressInt(e, "completed")
+		percent := int64(0)
+		if scope > 0 {
+			percent = completed * 100 / scope
+		}
+		rows = append(rows, []string{
+			name,
+			fmt.Sprintf("%d/%d (%d%%)", completed, scope, percent),
+			fmt.Sprint(progressInt(e, "started")),
+		})
+	}
+	return []string{"ASSIGNEE", "COMPLETED", "STARTED"}, rows
+}
 
 func formatLead(project map[string]any, actors actorDisplayLookup) string {
 	lType := strVal(project, "lead_type")
